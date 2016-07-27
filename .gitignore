@@ -1,3 +1,18 @@
+src/.tmp_versions/
+src/Module.symvers
+src/flashcache.mod.c
+src/modules.order
+src/utils/flashcache_create
+src/utils/flashcache_create.d
+src/utils/flashcache_destroy
+src/utils/flashcache_destroy.d
+src/utils/flashcache_load
+src/utils/flashcache_load.d
+src/utils/flashcache_setioctl
+src/utils/flashcache_setioctl.d
+src/utils/get_agsize
+src/utils/get_agsize.d
+
 # Compiled source #
 ###################
 *.com
