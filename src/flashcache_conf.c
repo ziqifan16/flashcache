@@ -865,14 +865,16 @@ flashcache_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
  * Construct a cache mapping.
  *  arg[0]: path to source device
  *  arg[1]: path to cache device
- *  arg[2]: md virtual device name
- *  arg[3]: cache mode (from flashcache.h)
- *  arg[4]: cache persistence (if set, cache conf is loaded from disk)
+ *  arg[2]: path to twin device
+ *  arg[3]: md virtual device name
+ *  arg[4]: cache mode (from flashcache.h)
+ *  arg[5]: cache persistence (if set, cache conf is loaded from disk)
  * Cache configuration parameters (if not set, default values are used.
- *  arg[5]: cache block size (in sectors)
- *  arg[6]: cache size (in blocks)
- *  arg[7]: cache associativity
- *  arg[8]: md block size (in sectors)
+ *  arg[6]: cache block size (in sectors)
+ *  arg[7]: cache size (in blocks)
+ *  arg[8]: twin block size (in sectors)
+ *  arg[9]: cache associativity
+ *  arg[10]: md block size (in sectors)
  */
 int 
 flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
@@ -882,8 +884,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	int r = -EINVAL;
 	int persistence = 0;
 	
-	if (argc < 3) {
-		ti->error = "flashcache: Need at least 3 arguments";
+	if (argc < 4) {
+		ti->error = "flashcache: Need at least 4 arguments";
 		goto bad;
 	}
 
@@ -911,29 +913,37 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			ti->error = "flashcache: Cache device lookup failed";
 		goto bad2;
 	}
-
-	if (sscanf(argv[2], "%s", (char *)&dmc->dm_vdevname) != 1) {
-		ti->error = "flashcache: Virtual device name lookup failed";
+	if ((r = flashcache_get_dev(ti, argv[2], &dmc->twin_dev,
+				    dmc->twin_devname, 0))) {
+		if (r == -EBUSY)
+			ti->error = "flashcache: Twin device is busy, cannot create cache";
+		else
+			ti->error = "flashcache: Twin device lookup failed";
 		goto bad3;
+	}
+
+	if (sscanf(argv[3], "%s", (char *)&dmc->dm_vdevname) != 1) {
+		ti->error = "flashcache: Virtual device name lookup failed";
+		goto bad4;
 	}
 
 	r = flashcache_kcached_init(dmc);
 	if (r) {
 		ti->error = "Failed to initialize kcached";
-		goto bad3;
+		goto bad4;
 	}
 
-	if (sscanf(argv[3], "%u", &dmc->cache_mode) != 1) {
-		ti->error = "flashcache: sscanf failed, invalid cache mode";
+	if (sscanf(argv[4], "%u", &dmc->cache_mode) != 1) {
+		ti->error = "$flashcache: !!!! sscanf failed, invalid cache mode";
 		r = -EINVAL;
-		goto bad3;
+		goto bad4;
 	}
 	if (dmc->cache_mode < FLASHCACHE_WRITE_BACK || 
 	    dmc->cache_mode > FLASHCACHE_WRITE_AROUND) {
 		DMERR("cache_mode = %d", dmc->cache_mode);
 		ti->error = "flashcache: Invalid cache mode";
 		r = -EINVAL;
-		goto bad3;
+		goto bad4;
 	}
 
 	/* 
@@ -941,40 +951,40 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	 * Maybe this should really be moved to the end of the param list ?
 	 */
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 5) {
-			if (sscanf(argv[4], "%u", &persistence) != 1) {
+		if (argc >= 6) {
+			if (sscanf(argv[5], "%u", &persistence) != 1) {
 				ti->error = "flashcache: sscanf failed, invalid cache persistence";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 			if (persistence < CACHE_RELOAD || persistence > CACHE_FORCECREATE) {
 				DMERR("persistence = %d", persistence);
 				ti->error = "flashcache: Invalid cache persistence";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}			
 		}
 		if (persistence == CACHE_RELOAD) {
 			if (flashcache_writeback_load(dmc)) {
 				ti->error = "flashcache: Cache reload failed";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 			goto init; /* Skip reading cache parameters from command line */
 		}
 	} else
 		persistence = CACHE_CREATE;
 
-	if (argc >= 6) {
-		if (sscanf(argv[5], "%u", &dmc->block_size) != 1) {
+	if (argc >= 7) {
+		if (sscanf(argv[6], "%u", &dmc->block_size) != 1) {
 			ti->error = "flashcache: Invalid block size";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 		if (!dmc->block_size || (dmc->block_size & (dmc->block_size - 1))) {
 			ti->error = "flashcache: Invalid block size";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 	
@@ -984,22 +994,22 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->block_mask = dmc->block_size - 1;
 
 	/* dmc->size is specified in sectors here, and converted to blocks later */
-	if (argc >= 7) {
-		if (sscanf(argv[6], "%lu", &dmc->size) != 1) {
+	if (argc >= 8) {
+		if (sscanf(argv[7], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache: Invalid cache size";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 	
 	if (!dmc->size)
 		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 
-	if (argc >= 8) {
-		if (sscanf(argv[7], "%u", &dmc->assoc) != 1) {
+	if (argc >= 10) {
+		if (sscanf(argv[9], "%u", &dmc->assoc) != 1) {
 			ti->error = "flashcache: Invalid cache associativity";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 		if (!dmc->assoc || (dmc->assoc & (dmc->assoc - 1)) ||
 		    dmc->assoc > FLASHCACHE_MAX_ASSOC ||
@@ -1007,18 +1017,18 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		    dmc->size < dmc->assoc) {
 			ti->error = "flashcache: Invalid cache associativity";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 	if (!dmc->assoc)
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 
-	if (argc >= 9) {
-		if (sscanf(argv[8], "%u", &dmc->disk_assoc) != 1) {
+	if (argc >= 11) {
+		if (sscanf(argv[10], "%u", &dmc->disk_assoc) != 1) {
 			ti->error = "flashcache: Invalid disk associativity";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 		/* disk_assoc of 0 is permitted value */
 		if ((dmc->disk_assoc > 0) &&
@@ -1031,17 +1041,17 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			       dmc->assoc, dmc->disk_assoc, dmc->size);
 			ti->error = "flashcache: Invalid disk associativity";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 	if (dmc->disk_assoc != 0)
 		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
 
-	if (argc >= 10) {
-		if (sscanf(argv[9], "%u", &dmc->write_only_cache) != 1) {
+	if (argc >= 12) {
+		if (sscanf(argv[11], "%u", &dmc->write_only_cache) != 1) {
 			ti->error = "flashcache: Invalid Write Cache setting";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 		if ((dmc->write_only_cache == 1) &&
 		    (dmc->cache_mode != FLASHCACHE_WRITE_BACK)) {
@@ -1049,35 +1059,35 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			       dmc->write_only_cache);
 			ti->error = "flashcache: Invalid Write Cache Setting";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 		if (dmc->write_only_cache < 0 || dmc->write_only_cache > 1) {
 			printk(KERN_ERR "Invalid Write Cache Setting %d\n",
 			       dmc->write_only_cache);
 			ti->error = "flashcache: Invalid Write Cache Setting";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 11) {
-			if (sscanf(argv[10], "%u", &dmc->md_block_size) != 1) {
+		if (argc >= 13) {
+			if (sscanf(argv[12], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 			if (!dmc->md_block_size || (dmc->md_block_size & (dmc->md_block_size - 1)) ||
 			    dmc->md_block_size > FLASHCACHE_MAX_MD_BLOCK_SIZE) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 			if (dmc->assoc < 
 			    (dmc->md_block_size * 512 / sizeof(struct flash_cacheblock))) {
 				ti->error = "flashcache: Please choose a smaller metadata block size or larger assoc";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 		}
 
@@ -1087,7 +1097,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		if (dmc->md_block_size * 512 < dmc->cache_dev->bdev->bd_block_size) {
 			ti->error = "flashcache: Metadata block size must be >= cache device sector size";
 			r = -EINVAL;
-			goto bad3;
+			goto bad4;
 		}
 	}
 
@@ -1096,13 +1106,13 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			if (flashcache_writeback_create(dmc, 0)) {
 				ti->error = "flashcache: Cache Create Failed";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 		} else {
 			if (flashcache_writeback_create(dmc, 1)) {
 				ti->error = "flashcache: Cache Force Create Failed";
 				r = -EINVAL;
-				goto bad3;
+				goto bad4;
 			}
 		}
 	} else
@@ -1116,7 +1126,7 @@ init:
 		ti->error = "Unable to allocate memory";
 		r = -ENOMEM;
 		vfree((void *)dmc->cache);
-		goto bad3;
+		goto bad4;
 	}				
 	memset(dmc->cache_sets, 0, order);
 	for (i = 0 ; i < dmc->num_sets ; i++) {
@@ -1139,7 +1149,7 @@ init:
 		r = -ENOMEM;
 		vfree((void *)dmc->cache);
 		vfree((void *)dmc->cache_sets);
-		goto bad3;
+		goto bad4;
 	}		
 
 	if (flashcache_kcopy_init(dmc)) {
@@ -1148,7 +1158,7 @@ init:
 		flashcache_diskclean_destroy(dmc);
 		vfree((void *)dmc->cache);
 		vfree((void *)dmc->cache_sets);
-		goto bad3;
+		goto bad4;
 	}		
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
@@ -1161,7 +1171,7 @@ init:
 			flashcache_diskclean_destroy(dmc);
 			vfree((void *)dmc->cache);
 			vfree((void *)dmc->cache_sets);
-			goto bad3;
+			goto bad4;
 		}		
 
 		for (i = 0 ; i < dmc->md_blocks - 1 ; i++) {
@@ -1273,6 +1283,8 @@ init:
 
 	return 0;
 
+bad4:
+	dm_put_device(ti, dmc->twin_dev);
 bad3:
 	dm_put_device(ti, dmc->cache_dev);
 bad2:

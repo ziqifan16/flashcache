@@ -46,7 +46,7 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-w] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev first_cache_devname second_cache_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-w] [-b block size] [-m md block size] [-s cache size] [-t twin size] [-a associativity] cachedev first_cache_devname second_cache_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, or specify in k/M/G. Default associativity is 512.\n",
@@ -125,6 +125,41 @@ get_cache_size(char *s)
 	return size;
 }
 
+static sector_t
+get_twin_size(char *s)
+{
+	sector_t size;
+	char *c;
+	
+	size = strtoll(s, NULL, 0);
+	for (c = s; isdigit (*c); c++)
+		;
+	switch (*c) {
+		case '\0': 
+			break;
+		case 'k':
+			size = (size * 1024) / 512;
+			break;
+		case 'm':
+		case 'M':
+			size = (size * 1024 * 1024) / 512;
+			break;
+		case 'g': 
+		case 'G': 
+			size = (size * 1024 * 1024 * 1024) / 512;
+			break;
+		case 't': 
+		case 'T': 
+			/* Twin size in terabytes?  Nice SSD! */
+			size = (size * 1024 * 1024 * 1024 * 1024) / 512;
+			break;
+		default:
+			fprintf (stderr, "%s: Unknown twin size type %c\n", pname, *c);
+			exit (1);
+	}
+	return size;
+}
+
 static int 
 module_loaded(void)
 {
@@ -197,8 +232,8 @@ main(int argc, char **argv)
 	int cache_fd, disk_fd, c;
 	char *disk_devname, *ssd_devname, *twin_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
-	sector_t cache_devsize, disk_devsize;
-	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
+	sector_t cache_devsize, twin_devsize, disk_devsize;
+	sector_t block_size = 0, md_block_size = 0, cache_size = 0, twin_size=0;
 	sector_t ram_needed;
 	struct sysinfo i;
 	int cache_sectorsize;
@@ -209,10 +244,13 @@ main(int argc, char **argv)
 	char *cache_mode_str;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:d:m:va:p:w")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:d:m:va:p:w:t")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
+			break;
+		case 't':
+			twin_size = get_twin_size(optarg);
 			break;
 		case 'a':
 			associativity = atoi(optarg);
@@ -269,11 +307,11 @@ main(int argc, char **argv)
 	ssd_devname = argv[optind++];
 	if (optind == argc)
 		usage (pname);
-	twin_devname == argv[optind++];
+	twin_devname = argv[optind++];
 	if (optind == argc)
 		usage(pname);
 	disk_devname = argv[optind];
-	printf("cachedev %s, ssd_devname %s, twin_devname %s, disk_devname %s cache mode %s\n", 
+	printf("$$cachedev %s, ssd_devname %s, twin_devname %s, disk_devname %s cache mode %s\n", 
 	       cachedev, ssd_devname, twin_devname, disk_devname, cache_mode_str);
 	if (cache_mode == FLASHCACHE_WRITE_BACK)
 		printf("block_size %lu, md_block_size %lu, cache_size %lu\n", 
@@ -302,6 +340,13 @@ main(int argc, char **argv)
 			pname, ssd_devname);
 		exit(1);
 	}
+
+	cache_fd = open(twin_devname, O_RDONLY);
+        if (cache_fd < 0) {
+                fprintf(stderr, "Failed to open %s\n", twin_devname);
+                exit(1);
+        }
+
 	disk_fd = open(disk_devname, O_RDONLY);
 	if (disk_fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s\n", 
@@ -311,6 +356,11 @@ main(int argc, char **argv)
 	if (ioctl(cache_fd, BLKGETSIZE, &cache_devsize) < 0) {
 		fprintf(stderr, "%s: Cannot get cache size %s\n", 
 			pname, ssd_devname);
+		exit(1);		
+	}
+	if (ioctl(cache_fd, BLKGETSIZE, &twin_devsize) < 0) {
+		fprintf(stderr, "%s: Cannot get twin cache size %s\n", 
+			pname, twin_devname);
 		exit(1);		
 	}
 	if (ioctl(disk_fd, BLKGETSIZE, &disk_devsize) < 0) {
@@ -361,10 +411,10 @@ main(int argc, char **argv)
 			ssd_devname, disk_devname);
 		check_sure();
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %d %lu %d %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %s %d 2 %lu %lu %lu %d %lu %d %lu"
 		" | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
-		cache_size, associativity, disk_associativity, write_cache_only, md_block_size,
+		disk_devsize, disk_devname, ssd_devname, twin_devname, cachedev, cache_mode, block_size, 
+		cache_size, twin_size, associativity, disk_associativity, write_cache_only, md_block_size,
 		cachedev);
 
 	/* Go ahead and create the cache.

@@ -367,6 +367,7 @@ struct cache_c {
 	// real device names are now stored as UUIDs
 	char cache_devname[DEV_PATHLEN];
 	char disk_devname[DEV_PATHLEN];
+	char twin_devname[DEV_PATHLEN];
 
 	/* 
 	 * If the SSD returns errors, in WRITETHRU and WRITEAROUND modes, 
@@ -535,6 +536,8 @@ struct flash_superblock {
 	u_int32_t cache_sb_state;	/* Clean shutdown ? */
 	char cache_devname[DEV_PATHLEN]; /* Contains dm_vdev name as of v2 modifications */
 	sector_t cache_devsize;
+	char twin_devname[DEV_PATHLEN]; /* FIXME: what should this be? */
+	sector_t twin_devsize;
 	char disk_devname[DEV_PATHLEN]; /* underlying block device name (use UUID paths!) */
 	sector_t disk_devsize;
 	u_int32_t cache_version;
