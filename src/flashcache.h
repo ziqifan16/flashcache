@@ -274,7 +274,8 @@ struct cache_c {
 	struct dm_target	*tgt;
 	
 	struct dm_dev 		*disk_dev;   /* Source device */
-	struct dm_dev 		*cache_dev; /* Cache device */
+	struct dm_dev 		*cache_dev;  /* Cache device */
+	struct dm_dev		*twin_dev;   /* The other cache device */
 
 	int 			on_ssd_version;
 	

@@ -46,7 +46,7 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-w] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-w] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev first_cache_devname second_cache_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, or specify in k/M/G. Default associativity is 512.\n",
@@ -195,7 +195,7 @@ int
 main(int argc, char **argv)
 {
 	int cache_fd, disk_fd, c;
-	char *disk_devname, *ssd_devname, *cachedev;
+	char *disk_devname, *ssd_devname, *twin_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t cache_devsize, disk_devsize;
 	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
@@ -268,10 +268,13 @@ main(int argc, char **argv)
 		usage(pname);
 	ssd_devname = argv[optind++];
 	if (optind == argc)
+		usage (pname);
+	twin_devname == argv[optind++];
+	if (optind == argc)
 		usage(pname);
 	disk_devname = argv[optind];
-	printf("cachedev %s, ssd_devname %s, disk_devname %s cache mode %s\n", 
-	       cachedev, ssd_devname, disk_devname, cache_mode_str);
+	printf("cachedev %s, ssd_devname %s, twin_devname %s, disk_devname %s cache mode %s\n", 
+	       cachedev, ssd_devname, twin_devname, disk_devname, cache_mode_str);
 	if (cache_mode == FLASHCACHE_WRITE_BACK)
 		printf("block_size %lu, md_block_size %lu, cache_size %lu\n", 
 		       block_size, md_block_size, cache_size);
